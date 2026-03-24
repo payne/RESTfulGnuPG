@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  GnuPG RESTful Service — AWS Lambda + API Gateway HTTP API.
+  Clients can upload public keys, list/export/delete them, and request
+  test messages that are encrypted to multiple recipients and signed
+  by the service's own private key.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment
+
+  ServiceKeyId:
+    Type: String
+    Default: ""
+    Description: >
+      Optional — fingerprint of a pre-existing service key stored in Secrets
+      Manager.  Leave blank to auto-generate a new keypair on first cold start.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [7, 14, 30, 60, 90, 180, 365]
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]          # Graviton2 — cheaper + fast for crypto
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        GNUPGHOME: /tmp/gnupg
+        KEY_BUCKET: !Ref KeyBucket
+        SERVICE_KEY_SECRET_ARN: !Ref ServiceKeySecret
+        SERVICE_KEY_ID: !Ref ServiceKeyId
+        LOG_LEVEL: INFO
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # ---- S3: public key store ----------------------------------------------
+  KeyBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "gnupg-lambda-keys-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+
+  # ---- Secrets Manager: service private key ------------------------------
+  ServiceKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "gnupg-lambda/service-key/${Environment}"
+      Description: "GnuPG service keypair (auto-generated on first cold start)"
+      SecretString: "{}"  # Will be populated by the Lambda on first run
+
+  # ---- IAM role -----------------------------------------------------------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "gnupg-lambda-role-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GnuPGLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # S3 — public key bucket
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt KeyBucket.Arn
+                  - !Sub "${KeyBucket.Arn}/*"
+              # Secrets Manager — service keypair
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:PutSecretValue
+                Resource: !Ref ServiceKeySecret
+
+  # ---- Lambda Layer: GPG binary + python-gnupg ---------------------------
+  # Build with scripts/build_layer.sh; upload the zip before deploying.
+  GnuPGLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "gnupg-lambda-layer-${Environment}"
+      Description: "GPG 2.x binary compiled for Amazon Linux 2023 arm64 + python-gnupg"
+      ContentUri: layer/gnupg-layer.zip
+      CompatibleRuntimes: [python3.12]
+      CompatibleArchitectures: [arm64]
+      RetentionPolicy: Retain
+
+  # ---- Lambda function ---------------------------------------------------
+  GnuPGFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "gnupg-lambda-${Environment}"
+      CodeUri: src/
+      Handler: handler.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Layers:
+        - !Ref GnuPGLayer
+      EphemeralStorage:
+        Size: 1024              # /tmp space for GNUPGHOME + key operations
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: ANY
+            Path: /{proxy+}
+        ApiHealth:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /health
+
+  # ---- Log group ---------------------------------------------------------
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/gnupg-lambda-${Environment}"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---- API Gateway HTTP API ----------------------------------------------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub "gnupg-lambda-api-${Environment}"
+      Description: "GnuPG RESTful Service"
+      StageName: !Ref Environment
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowHeaders: ["Content-Type", "Authorization"]
+        AllowMethods: ["GET", "POST", "DELETE", "OPTIONS"]
+        MaxAge: 600
+      Auth:
+        # Add an Authorizer here (e.g. JWT / Cognito) for production
+        DefaultAuthorizer: NONE
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  ApiEndpoint:
+    Description: "HTTPS endpoint for the GnuPG REST API"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "GnuPGApiEndpoint-${Environment}"
+
+  KeyBucketName:
+    Description: "S3 bucket holding imported public keys"
+    Value: !Ref KeyBucket
+    Export:
+      Name: !Sub "GnuPGKeyBucket-${Environment}"
+
+  ServiceKeySecretArn:
+    Description: "Secrets Manager ARN for the service keypair"
+    Value: !Ref ServiceKeySecret
+    Export:
+      Name: !Sub "GnuPGServiceKeySecretArn-${Environment}"
+
+  LambdaFunctionArn:
+    Description: "Lambda function ARN"
+    Value: !GetAtt GnuPGFunction.Arn
