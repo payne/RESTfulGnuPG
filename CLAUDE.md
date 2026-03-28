@@ -34,6 +34,8 @@ BASE_URL=https://<id>.execute-api.<region>.amazonaws.com/dev ./scripts/smoke_tes
 
 # Run locally with Docker Compose (uses LocalStack for AWS services)
 docker-compose up --build
+# API: http://localhost:8080
+# Swagger UI: http://localhost:8080/docs
 
 # Smoke test against local
 BASE_URL=http://localhost:8080 ./scripts/smoke_test.sh

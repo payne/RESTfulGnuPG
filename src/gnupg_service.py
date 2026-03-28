@@ -111,7 +111,7 @@ class GnuPGService:
         else:
             logger.info("No service key found — generating a new one.")
             self._service_fingerprint = self._generate_service_key()
-            armored = str(self._gpg.export_keys(self._service_fingerprint, secret=True, armor=True))
+            armored = str(self._gpg.export_keys(self._service_fingerprint, secret=True, armor=True, passphrase=""))
             self._store_secret(
                 {
                     "fingerprint": self._service_fingerprint,

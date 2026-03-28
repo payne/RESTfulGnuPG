@@ -1,0 +1,284 @@
+openapi: 3.0.3
+info:
+  title: GnuPG RESTful Service
+  description: |
+    REST API wrapping GnuPG operations. Upload public keys, list/export/delete them,
+    and request messages encrypted to recipients and signed by the service's private key.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags: [Service]
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+
+  /service/pubkey:
+    get:
+      summary: Get service public key
+      description: Returns the service's own public key. Import this to verify message signatures.
+      tags: [Service]
+      responses:
+        '200':
+          description: Service public key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicePublicKey'
+
+  /keys:
+    get:
+      summary: List all public keys
+      tags: [Keys]
+      responses:
+        '200':
+          description: List of imported public keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyMetadata'
+                  count:
+                    type: integer
+                    example: 2
+
+    post:
+      summary: Import a public key
+      tags: [Keys]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key]
+              properties:
+                key:
+                  type: string
+                  description: ASCII-armored PGP public key
+                  example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+      responses:
+        '201':
+          description: Key imported successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported:
+                    type: integer
+                    example: 1
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/KeyMetadata'
+        '400':
+          description: Invalid key or missing field
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /keys/{fingerprint}:
+    get:
+      summary: Export a public key
+      tags: [Keys]
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9A-Fa-f]{8,40}$'
+          description: Key fingerprint (8-40 hex characters)
+          example: ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234
+      responses:
+        '200':
+          description: Public key exported
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/KeyMetadata'
+                  - type: object
+                    properties:
+                      armored_key:
+                        type: string
+                        example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+        '404':
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a public key
+      tags: [Keys]
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9A-Fa-f]{8,40}$'
+          description: Key fingerprint (8-40 hex characters)
+      responses:
+        '200':
+          description: Key deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    example: true
+                  fingerprint:
+                    type: string
+                    example: ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234
+        '404':
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /messages:
+    post:
+      summary: Encrypt and sign a message
+      description: |
+        Encrypts plaintext to the specified recipients and signs with the service's private key.
+        Recipients must have been previously imported via POST /keys.
+      tags: [Messages]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plaintext, recipients]
+              properties:
+                plaintext:
+                  type: string
+                  description: Message to encrypt
+                  example: This is a confidential test message.
+                recipients:
+                  type: array
+                  description: List of recipient fingerprints (max 20)
+                  maxItems: 20
+                  items:
+                    type: string
+                    pattern: '^[0-9A-Fa-f]{8,40}$'
+                  example:
+                    - ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234
+      responses:
+        '201':
+          description: Message encrypted and signed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EncryptedMessage'
+        '400':
+          description: Invalid request or too many recipients
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Recipient key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  schemas:
+    KeyMetadata:
+      type: object
+      properties:
+        fingerprint:
+          type: string
+          example: ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234
+        key_id:
+          type: string
+          example: ABCD1234
+        uids:
+          type: array
+          items:
+            type: string
+          example: ["Alice <alice@example.com>"]
+        length:
+          type: string
+          example: "4096"
+        algo:
+          type: string
+          example: "1"
+        date:
+          type: string
+          example: "1700000000"
+        expires:
+          type: string
+          example: ""
+        trust:
+          type: string
+          example: "-"
+
+    ServicePublicKey:
+      type: object
+      properties:
+        fingerprint:
+          type: string
+          example: SERVICEKEY00000000000000000000000000000001
+        armored_key:
+          type: string
+          example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+        note:
+          type: string
+          example: Import this key to verify messages signed by the service.
+
+    EncryptedMessage:
+      type: object
+      properties:
+        ciphertext:
+          type: string
+          example: "-----BEGIN PGP MESSAGE-----\n..."
+        signed_by:
+          type: string
+          example: SERVICEKEY00000000000000000000000000000001
+        encrypted_for:
+          type: array
+          items:
+            type: string
+          example: ["ABCD1234ABCD1234ABCD1234ABCD1234ABCD1234"]
+        recipient_count:
+          type: integer
+          example: 1
+        status:
+          type: string
+          example: ok
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Key not found

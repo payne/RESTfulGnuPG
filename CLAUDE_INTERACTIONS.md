@@ -32,3 +32,18 @@ docker-compose up --build
 ```
 
 The local server patches boto3 to route AWS calls to LocalStack. Service keypair is auto-generated on first request.
+
+### Added Swagger UI
+
+Added interactive API documentation accessible at http://localhost:8080/docs
+
+**Files created/modified:**
+- `src/openapi.yaml` - OpenAPI 3.0 specification with all endpoints, schemas, and examples
+- `src/local_server.py` - Added flask-swagger-ui integration
+- `requirements.txt` - Added flask-swagger-ui dependency
+
+### Fixed GnuPG 2.1+ Secret Key Export
+
+Fixed `ValueError: For GnuPG >= 2.1, exporting secret keys needs a passphrase to be provided`.
+
+GnuPG 2.1+ requires a passphrase parameter when exporting secret keys, even for keys with no protection. Added `passphrase=""` to the `export_keys()` call in `gnupg_service.py:114`.
