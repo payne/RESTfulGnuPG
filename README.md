@@ -105,16 +105,22 @@ gnupg-lambda/
 ├── src/
 │   ├── handler.py          # Lambda entry point + HTTP router
 │   ├── gnupg_service.py    # GnuPG operations + AWS integration
-│   └── requirements.txt
-├── tests/
+│   ├── local_server.py     # Flask wrapper for local development
+│   ├── openapi.yaml        # OpenAPI 3.0 spec (serves Swagger UI)
 │   └── test_handler.py     # Unit tests (mocked service)
+├── tests/
+│   ├── conftest.py         # Pytest fixtures
+│   └── test_integration.py # Integration tests (Docker Compose)
 ├── infra/
 │   └── template.yaml       # AWS SAM / CloudFormation template
 ├── layer/                  # Built by build_layer.sh (git-ignored)
 │   └── gnupg-layer.zip
-└── scripts/
-    ├── build_layer.sh      # Builds the Lambda Layer (Docker-based)
-    └── smoke_test.sh       # End-to-end smoke tests against a live endpoint
+├── scripts/
+│   ├── build_layer.sh      # Builds the Lambda Layer (Docker-based)
+│   ├── localstack-init.sh  # Initializes LocalStack resources
+│   └── smoke_test.sh       # End-to-end smoke tests
+├── docker-compose.yml      # Local dev environment
+└── Dockerfile.local        # Container for local development
 ```
 
 ---
@@ -148,22 +154,54 @@ sam deploy \
   --resolve-s3
 ```
 
-SAM will output the API endpoint URL on completion.
-
-### Step 3 — Smoke test
-
-```bash
-BASE_URL=https://<id>.execute-api.<region>.amazonaws.com/dev \
-  ./scripts/smoke_test.sh
-```
+SAM will output the API endpoint URL on completion. See [Running Tests](#running-tests) for smoke test instructions.
 
 ---
 
-## Running tests locally
+## Local Development
+
+Run the service locally using Docker Compose with LocalStack (mocks S3 and Secrets Manager):
+
+```bash
+docker compose up --build
+```
+
+- **API:** http://localhost:8080
+- **Swagger UI:** http://localhost:8080/docs
+
+---
+
+## Running Tests
+
+### Unit tests (mocked, no Docker needed)
 
 ```bash
 pip install python-gnupg boto3 pytest
-pytest tests/ -v
+pytest src/test_handler.py -v
+```
+
+### Integration tests (requires Docker Compose)
+
+```bash
+pip install -r requirements-test.txt
+docker compose up -d --build
+pytest
+```
+
+Run a single test:
+
+```bash
+pytest tests/test_integration.py::TestHealth::test_health_returns_200 -v
+```
+
+### Smoke tests (against any endpoint)
+
+```bash
+# Against local Docker Compose
+BASE_URL=http://localhost:8080 ./scripts/smoke_test.sh
+
+# Against deployed AWS endpoint
+BASE_URL=https://<id>.execute-api.<region>.amazonaws.com/dev ./scripts/smoke_test.sh
 ```
 
 ---

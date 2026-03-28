@@ -22,12 +22,17 @@ sam deploy \
   --parameter-overrides Environment=dev \
   --resolve-s3
 
-# Run unit tests
+# Run unit tests (mocked, no Docker needed)
 pip install python-gnupg boto3 pytest
 pytest src/test_handler.py -v
 
+# Run integration tests (requires Docker Compose)
+pip install -r requirements-test.txt
+docker compose up -d --build
+pytest tests/ -v
+
 # Run a single test
-pytest src/test_handler.py::TestRouting::test_post_keys_success -v
+pytest tests/test_integration.py::TestHealth::test_health_returns_200 -v
 
 # Smoke test against live endpoint
 BASE_URL=https://<id>.execute-api.<region>.amazonaws.com/dev ./scripts/smoke_test.sh

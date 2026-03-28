@@ -47,3 +47,39 @@ Added interactive API documentation accessible at http://localhost:8080/docs
 Fixed `ValueError: For GnuPG >= 2.1, exporting secret keys needs a passphrase to be provided`.
 
 GnuPG 2.1+ requires a passphrase parameter when exporting secret keys, even for keys with no protection. Added `passphrase=""` to the `export_keys()` call in `gnupg_service.py:114`.
+
+### Added Integration Tests
+
+Created pytest integration tests that run against the Docker Compose environment.
+
+**Files created:**
+- `tests/__init__.py` - Package marker
+- `tests/conftest.py` - Pytest fixtures (API client, test key, service readiness check)
+- `tests/test_integration.py` - Comprehensive integration tests for all endpoints
+- `pytest.ini` - Pytest configuration
+- `requirements-test.txt` - Test dependencies (pytest, requests)
+
+**Usage:**
+```bash
+pip install -r requirements-test.txt
+docker compose up -d --build
+pytest
+```
+
+**Test coverage:**
+- Health endpoint
+- Service public key retrieval
+- Key import (success, validation errors)
+- Key listing
+- Key export (full/partial fingerprint, errors)
+- Key deletion
+- Message encryption (success, validation, recipient limits)
+- Unknown routes
+
+### Updated README.md
+
+Added documentation for:
+- Local development with Docker Compose
+- Swagger UI URL
+- Integration test instructions
+- Updated project layout with new files
